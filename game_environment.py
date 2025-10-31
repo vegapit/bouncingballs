@@ -1,6 +1,7 @@
-import numpy as np
+import numpy, gymnasium
 from ball import Ball
 from player_ball import PlayerBall
+from typing import Optional
 
 RED = (255,0,0)
 GREEN = (0,102,0)
@@ -8,119 +9,167 @@ BLUE = (0,128,255)
 COLORS = {'red': RED, 'green': GREEN}
 
 def generate_random_speed_vector(minspeed, maxspeed):
-    vx, vy = np.random.randint(minspeed, maxspeed+1), np.random.randint(minspeed, maxspeed+1)
-    if np.random.random_sample() < 0.5:
+    vx, vy = numpy.random.randint(minspeed, maxspeed+1), numpy.random.randint(minspeed, maxspeed+1)
+    if numpy.random.random_sample() < 0.5:
         vx = -vx
-    if np.random.random_sample() < 0.5:
+    if numpy.random.random_sample() < 0.5:
         vy = -vy
     return [vx,vy]
 
 def generate_random_starting_position(maxdistance, display_height, display_width):
-    x, y = np.random.randint(8, maxdistance+1), np.random.randint(8, maxdistance+1)
-    if np.random.random_sample() < 0.5:
+    x, y = numpy.random.randint(8, maxdistance+1), numpy.random.randint(8, maxdistance+1)
+    if numpy.random.random_sample() < 0.5:
         x = display_width - x
-    if np.random.random_sample() < 0.5:
+    if numpy.random.random_sample() < 0.5:
         y = display_height - y
     return [x,y]
 
-class GameEnvironment( object ):
+class GameEnvironment( gymnasium.Env ):
+
+    # --- ADDED METADATA FOR RENDER MODE SUPPORT ---
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(self, display_shape, dt):
         self.display_width, self.display_height = display_shape[0], display_shape[1]
         self.dt = dt
-        self.motion_step = 2
+        self.motion_step = 5
+        self.max_speed = 150
 
-    def reset(self):
-        self.done = False
+        self.action_space = gymnasium.spaces.Discrete(9) # 0: No move, 1: Up, 2: Up&Right, 3: Right, 4: Down&Right, 5: Down, 6: Down&Left, 7: Left, 8: Up&Left
+
+        self.observation_space = gymnasium.spaces.Dict({
+            'hero': gymnasium.spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=numpy.float32),
+            'balls_position': gymnasium.spaces.Box(low=0.0, high=1.0, shape=(10,2), dtype=numpy.float32),
+            'balls_speed': gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(10,2), dtype=numpy.float32),
+            'balls_type': gymnasium.spaces.Box(low=0, high=2, shape=(10,), dtype=numpy.int32)
+        })
+
+        self.balls = []
+        self.hero_ball = None
+        self.ball_inventory = {'red': 4, 'green': 6}
+
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+        super().reset(seed = seed)
+
+        self.balls = []
+        self.step_counter = 0
+
+        # NOTE: Using a fixed seed for demonstration, but typically let super().reset() handle it
+        if seed is not None:
+            numpy.random.seed(seed)
 
         #Balls
         self.ball_inventory = {'red': 4, 'green': 6}
-        self.balls = []
-        for key in self.ball_inventory.keys():
-            for i in range(self.ball_inventory[key]):
-                self.balls.append( Ball(generate_random_starting_position(20, self.display_height, self.display_width),
-                                    generate_random_speed_vector(70,130), COLORS[key], (self.display_width, self.display_height)) )
+        for key, count in self.ball_inventory.items():
+            for i in range( count ):
+                init_pos = generate_random_starting_position(20, self.display_height, self.display_width)
+                init_speed = generate_random_speed_vector(self.max_speed / 2, self.max_speed)
+                ball = Ball(init_pos, init_speed, COLORS[key], (self.display_width, self.display_height))
+                self.balls.append( ball )
 
         #Players balls
-        self.hero_ball = PlayerBall([self.display_width/2,self.display_height/4],BLUE,(self.display_width,self.display_height))
+        init_hero_pos = [self.display_width/2,self.display_height/4]
+        self.hero_ball = PlayerBall(init_hero_pos,BLUE,(self.display_width,self.display_height))
 
-        return self._get_state()
+        observation = self._get_obs()
+        info = self._get_info()
 
-    def _get_state(self):
+        return observation, info
 
-        x0 = self.hero_ball.pos[0]/float(self.display_width)
-        y0 = self.hero_ball.pos[1]/float(self.display_height)
+    def _get_obs(self):
+        dim_array = numpy.array([self.display_width, self.display_height], dtype=numpy.float32)
 
-        balls_state = []
-
-        for ball in self.balls:
-            if ball.live:
-                x = ball.pos[0]/float(self.display_width)
-                y = ball.pos[1]/float(self.display_height)
-                Vx = ball.v[0]/float(self.display_width)
-                Vy = ball.v[1]/float(self.display_height)
-                if ball.color == GREEN:
-                    s = 0.1
-                else:
-                    s = -1.0
-                balls_state.append([x,y,Vx,Vy,s])
+        hero_position_obs = self.hero_ball.pos / dim_array
+        
+        balls_position_obs = numpy.zeros( (len(self.balls),2), dtype=numpy.float32 )
+        balls_speed_obs = numpy.zeros( (len(self.balls),2), dtype=numpy.float32 )
+        balls_type_obs = numpy.zeros( len(self.balls), dtype=numpy.int32 )
+        
+        for i, ball in enumerate(self.balls):
+            balls_position_obs[i,:] = ball.pos / dim_array
+            balls_speed_obs[i,:] = ball.v / float( self.max_speed )
+            if not ball.live:
+                balls_type_obs[i] = 0
+            elif ball.color == GREEN:
+                balls_type_obs[i] = 1
             else:
-                balls_state.append([0.0,0.0,0.0,0.0,0.0])
+                balls_type_obs[i] = 2
                 
-        return [np.array([x0,y0]), np.vstack(balls_state).reshape((len(self.balls),5))]
+        return {
+            'hero': hero_position_obs,
+            'balls_position': balls_position_obs,
+            'balls_speed': balls_speed_obs,
+            'balls_type': balls_type_obs
+        }
+
+    def _get_info(self):
+        return self.ball_inventory
 
     def step(self, action):
-        x_change, y_change = 0.0, 0.0
+        terminated, truncated = False, False
+        x_change, y_change, reward = 0.0, 0.0, 0.0
 
-        # 0: No move, 1: Up, 2: Up&Right...
-        if action in [8,1,2] and (self.hero_ball.pos[1] + self.motion_step > self.hero_ball.r):
-            y_change = self.motion_step
-        if action in [6,5,4] and (self.hero_ball.pos[1] + self.motion_step < self.display_height - self.hero_ball.r):
-            y_change = -self.motion_step
-        if action in [2,3,4] and (self.hero_ball.pos[0] + self.motion_step < self.display_width - self.hero_ball.r):
-            x_change = self.motion_step
-        if action in [8,7,6] and (self.hero_ball.pos[0] - self.motion_step > self.hero_ball.r):
-            x_change = -self.motion_step
+        self.step_counter += 1
+        if self.step_counter >= 1000:
+            truncated = True
 
-        # Move hero ball
-        if action in [8,1,2]:
-            self.hero_ball.update_position(0,self.motion_step)
-        if action in [6,5,4]:
-            self.hero_ball.update_position(0,-self.motion_step)
-        if action in [8,7,6]:
-            self.hero_ball.update_position(-self.motion_step,0)
-        if action in [2,3,4]:
-            self.hero_ball.update_position(self.motion_step,0)
+        # 0: No move, 1: Up, 2: Up&Right, 3: Right, 4: Down&Right, 5: Down, 6: Down&Left, 7: Left, 8: Up&Left
+        match action:
+            case 1:  # Up
+                x_change, y_change = 0, -self.motion_step
+            case 2:  # Up&Right
+                x_change, y_change = self.motion_step, -self.motion_step
+            case 3:  # Right
+                x_change, y_change = self.motion_step, 0
+            case 4:  # Down&Right
+                x_change, y_change = self.motion_step, self.motion_step
+            case 5:  # Down
+                x_change, y_change = 0.0, self.motion_step
+            case 6:  # Down&Left
+                x_change, y_change = -self.motion_step, self.motion_step
+            case 7:  # Left
+                x_change, y_change = -self.motion_step, 0.0
+            case 8:  # Up&Left
+                x_change, y_change = -self.motion_step, -self.motion_step
+            case _:
+                pass
+
+        max_distance = numpy.linalg.norm([self.display_width, self.display_height])
+
+        # Update hero ball position (only once)
+        self.hero_ball.update_position(x_change, y_change)
 
         # Move balls to next position
         for ball in self.balls:
-            if ball.live:
-                ball.move(self.dt)
+            ball.update_position( self.dt )
 
-        reward = 0.0 # penalty incured at each time step
         # Calculate reward
         for ball in self.balls:
             if ball.live:
                 # Check if Hero ball is hit
                 if Ball.check_hit(self.hero_ball.pos, self.hero_ball.r, ball.pos, ball.r):
                     if ball.color == GREEN:
-                        reward += 0.1 # Reward for hitting Green Ball
+                        reward += 0.25 # Reward for hitting Green Ball
                         ball.live = False
                         self.ball_inventory['green'] -= 1
                     else:
                         reward = -1.0 # Penalty for hitting Red and Exit
                         ball.live = False
-                        self.done = True
+                        terminated = True
                         break
 
                 # Check if any green or blue balls left
                 if self.ball_inventory['green'] == 0: # Exit if no green balls left reached
-                    self.done = True
+                    reward += 1.0
+                    terminated = True
                     break
 
-        return self._get_state(), reward, self.done
+        observation = self._get_obs()
+        info = self._get_info()
 
-    def render(self, gamedisplay=None):
+        return observation, reward, terminated, truncated, info
+
+    def render(self, gamedisplay):
         if gamedisplay:
             self.hero_ball.draw(gamedisplay)
             for ball in self.balls:

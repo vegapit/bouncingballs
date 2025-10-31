@@ -1,82 +1,92 @@
-import os
-import pygame
-import numpy as np
-import tensorflow as tf
+import os, numpy, pygame, gymnasium
 from game_environment import GameEnvironment
-from qvalue_network import QValueNetwork
+from expert_agent import ExpertAgent
+from stable_baselines3 import PPO
+from PIL import Image
 
-WHITE = (255,255,255)
+BACKGROUND_COLOR = (255,229,204)
 BLACK = (0,0,0)
 DISPLAY_SHAPE = (480, 480)
-FPS = 60
+FPS = 24
 
-MODEL_FILE = './saved/bouncing-balls.ckpt'
-LEARNING_RATE = 0.0001
-TAU = 0.01
+recording = False
+frames = []
 
-with tf.Session() as sess:
+pygame.init()
 
-    pygame.init()
+clock = pygame.time.Clock()
+gameDisplay = pygame.display.set_mode(DISPLAY_SHAPE)
+pygame.display.set_caption('Bouncing Balls')
 
-    clock = pygame.time.Clock()
-    gameDisplay = pygame.display.set_mode(DISPLAY_SHAPE)
-    pygame.display.set_caption('Bouncing Balls')
+env = GameEnvironment( DISPLAY_SHAPE, 1.0/float(FPS) )
+model = PPO.load("ppo_bouncing_balls_latest", env=env)
 
-    env = GameEnvironment(DISPLAY_SHAPE,1.0/float(FPS))
+expert = ExpertAgent( env.motion_step, env.motion_step, env.dt )
 
-    hero_state_dim = 2
-    balls_state_shape = (10,5)
-    action_dim = 9
+for episode_num in range(3):
 
-    qvalue_network = QValueNetwork(sess, hero_state_dim, balls_state_shape, action_dim, LEARNING_RATE, TAU)
-    
-    saver = tf.train.Saver(max_to_keep=1)
-    saver.restore(sess, MODEL_FILE)
+    obs, info = env.reset()
+    episode_reward = 0
 
-    while True:
+    episode_over = False
+    while not episode_over:
 
-        s = env.reset()
-        score, done = 0.0, False
+        clock.tick(FPS) # generate new frame
 
-        # Loop until terminal state
-        while not done:
+        gameDisplay.fill(BACKGROUND_COLOR)
 
-            clock.tick(FPS) # generate new frame
+        env.render(gameDisplay)
 
-            gameDisplay.fill(WHITE)
+        action, _ = model.predict(obs, deterministic=True)
+        #action = expert.select_action( env.hero_ball, env.balls )
 
-            env.render(gameDisplay)
+        obs, reward, terminated, truncated, info = env.step(action)
+        episode_reward += reward
 
-            a = qvalue_network.best_actions( np.expand_dims(s[0],axis=0), np.expand_dims(s[1], axis=0) ).ravel()
+        episode_over = terminated or truncated
 
-            action_index = np.argmax( a )
+        font = pygame.font.SysFont(None, 18)
+        text = font.render(f"Score: {episode_reward:.2f}", True, BLACK)
+        gameDisplay.blit(text,(DISPLAY_SHAPE[0]/3,60))
 
-            s, reward, done = env.step(action_index)
-
-            if (reward != 0.0):
-                score += reward
-
-            font = pygame.font.SysFont(None, 18)
-            text = font.render("Score: %.2f" % score, True, BLACK)
-            gameDisplay.blit(text,(DISPLAY_SHAPE[0]/3,60))
-
-            # Update Display
-            pygame.display.update()
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    quit()
-
-        gameDisplay.fill(WHITE)
-
-        font = pygame.font.SysFont(None, 42)
-        text = font.render("GAME OVER", True, BLACK)
-        gameDisplay.blit(text,(DISPLAY_SHAPE[0]/3,DISPLAY_SHAPE[1]/3))
-
+        # Update Display
         pygame.display.update()
 
-        pygame.time.delay(3000)
+        if recording:
+            pygame_frame = pygame.surfarray.array3d(gameDisplay)
+            pygame_frame = pygame_frame.transpose([1, 0, 2])  # Swap axes to (height, width, channels)
+            pil_image = Image.fromarray(pygame_frame)
+            frames.append(pil_image)
 
-    pygame.quit()
-    quit()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
+
+    gameDisplay.fill(BACKGROUND_COLOR)
+
+    font = pygame.font.SysFont(None, 42)
+    text = font.render("GAME OVER", True, BLACK)
+    gameDisplay.blit(text,(DISPLAY_SHAPE[0]/3,DISPLAY_SHAPE[1]/3))
+
+    pygame.display.update()
+
+    print(f"Episode {episode_num} ended with score: {episode_reward:.2f} in {env.step_counter} steps.")
+    #print(obs)
+
+    pygame.time.delay(3000)
+
+if recording and len(frames) > 0:
+    frames[0].save(
+        'animation.gif', 
+        save_all = True, 
+        append_images = frames[1:], 
+        duration = 1000.0/float(FPS),  # milliseconds per frame
+        loop = 0 # 0 = infinite loop
+    )  
+    print("GIF saved as animation.gif")
+
+env.close()
+
+pygame.quit()
+quit()
