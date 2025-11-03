@@ -1,6 +1,5 @@
 import os, numpy, pygame, gymnasium
 from game_environment import GameEnvironment
-from expert_agent import ExpertAgent
 from stable_baselines3 import PPO
 from PIL import Image
 
@@ -8,8 +7,9 @@ BACKGROUND_COLOR = (255,229,204)
 BLACK = (0,0,0)
 DISPLAY_SHAPE = (480, 480)
 FPS = 24
+SEED = 23
 
-recording = False
+recording = True
 frames = []
 
 pygame.init()
@@ -19,11 +19,10 @@ gameDisplay = pygame.display.set_mode(DISPLAY_SHAPE)
 pygame.display.set_caption('Bouncing Balls')
 
 env = GameEnvironment( DISPLAY_SHAPE, 1.0/float(FPS) )
+env.reset(SEED)
+
 model = PPO.load("ppo_bouncing_balls_latest", env=env)
-
-expert = ExpertAgent( env.motion_step, env.motion_step, env.dt )
-
-for episode_num in range(3):
+for episode_num in range(5):
 
     obs, info = env.reset()
     episode_reward = 0
@@ -38,8 +37,7 @@ for episode_num in range(3):
         env.render(gameDisplay)
 
         action, _ = model.predict(obs, deterministic=True)
-        #action = expert.select_action( env.hero_ball, env.balls )
-
+        
         obs, reward, terminated, truncated, info = env.step(action)
         episode_reward += reward
 
@@ -72,7 +70,6 @@ for episode_num in range(3):
     pygame.display.update()
 
     print(f"Episode {episode_num} ended with score: {episode_reward:.2f} in {env.step_counter} steps.")
-    #print(obs)
 
     pygame.time.delay(3000)
 

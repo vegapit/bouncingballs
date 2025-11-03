@@ -22,19 +22,23 @@ class CustomFeaturesExtractor(BaseFeaturesExtractor):
         num_balls = observation_space['balls_position'].shape[0]
         
         # Per-ball feature dimension
+        hero_position_dim = 32
         ball_feature_dim = 64
-        embeddings_dim = 16
+        ball_status_embeddings_dim = 16
+        ball_color_embeddings_dim = 16
         
         # Hero encoding
-        self.hero_position_encoder = ResidualBlock(hero_shape, 32)
+        self.hero_position_encoder = ResidualBlock(hero_shape, hero_position_dim)
             
-        # Ball type embedding
-        self.balls_type_embedding = nn.Embedding(3,embeddings_dim)
+        # Ball color embedding
+        self.balls_color_embedding = nn.Embedding(2, ball_color_embeddings_dim)
+
+        # Ball status embedding
+        self.balls_status_embedding = nn.Embedding(2, ball_status_embeddings_dim)
         
-        # Per-ball encoder: combines position, speed, and type
-        # Input: abssolute_position(2) + relative_position(2) + speed(2) + type_embedding(embeddings_dim)
+        # Per-ball encoder: combines position, speed, color and status
         self.ball_encoder = nn.Sequential(
-            ResidualBlock(2 + 2 + 2 + embeddings_dim, ball_feature_dim),
+            ResidualBlock(2 + 2 + 2 + ball_color_embeddings_dim + ball_status_embeddings_dim, ball_feature_dim),
             ResidualBlock(ball_feature_dim, ball_feature_dim),
             ResidualBlock(ball_feature_dim, ball_feature_dim),
             ResidualBlock(ball_feature_dim, ball_feature_dim),
@@ -42,37 +46,39 @@ class CustomFeaturesExtractor(BaseFeaturesExtractor):
         )
         
         # Final combination
-        self.combined_net = ResidualBlock(32 + ball_feature_dim, features_dim)
+        self.combined_net = ResidualBlock(hero_position_dim + ball_feature_dim, features_dim)
 
     def forward(self, observations):
         batch_size = observations['hero'].shape[0]
         
         # Encode hero
         hero_position = observations['hero']  # (batch, 2)
-        
+        hero_pos_encoded = self.hero_position_encoder( hero_position )  # (batch, hero_position_dim)
+
         # Encode each ball
         balls_position = observations['balls_position']  # (batch, num_balls, 2)
         balls_speed = observations['balls_speed']  # (batch, num_balls, 2)
-        balls_type = observations['balls_type'].long()  # (batch, num_balls)
+        balls_color = observations['balls_color'].long()  # (batch, num_balls)
+        balls_status = observations['balls_status'].long()  # (batch, num_balls)
         
-        hero_pos_encoded = self.hero_position_encoder( hero_position )  # (batch, 32)
-        
-        # Get type embeddings
-        type_embeddings = self.balls_type_embedding( balls_type )  # (batch, num_balls, 64)
+        # Get ball embeddings
+        color_embeddings = self.balls_color_embedding( balls_color )  # (batch, num_balls, ball_color_embeddings_dim)
+        status_embeddings = self.balls_status_embedding( balls_status )  # (batch, num_balls, ball_status_embeddings_dim)
         
         # Concatenate position, speed, and type for each ball
         ball_inputs = torch.cat([
             balls_position,
             balls_position - hero_position.unsqueeze(1),  # relative position
             balls_speed,
-            type_embeddings
-        ], dim=-1)  # (batch, num_balls, 2 + 2 + 2 + embeddings_dim)
+            color_embeddings,
+            status_embeddings
+        ], dim=-1)  # (batch, num_balls, 2 + 2 + 2 + ball_color_embeddings_dim + ball_status_embeddings_dim)
         
         # Encode each ball
-        ball_features = self.ball_encoder( ball_inputs ) # (batch, num_balls, 64)
+        ball_features = self.ball_encoder( ball_inputs ) # (batch, num_balls, ball_feature_dim)
         
         # Pool ball features
-        ball_features_pooled = ball_features.mean(dim=1)  # (batch, 64)
+        ball_features_pooled = ball_features.mean(dim=1)  # (batch, ball_feature_dim)
 
         # Combine all features
         combined = torch.cat([hero_pos_encoded, ball_features_pooled], dim=1)

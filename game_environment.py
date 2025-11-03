@@ -41,7 +41,8 @@ class GameEnvironment( gymnasium.Env ):
             'hero': gymnasium.spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=numpy.float32),
             'balls_position': gymnasium.spaces.Box(low=0.0, high=1.0, shape=(10,2), dtype=numpy.float32),
             'balls_speed': gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(10,2), dtype=numpy.float32),
-            'balls_type': gymnasium.spaces.Box(low=0, high=2, shape=(10,), dtype=numpy.int32)
+            'balls_color': gymnasium.spaces.Box(low=0, high=1, shape=(10,), dtype=numpy.int32),
+            'balls_status': gymnasium.spaces.Box(low=0, high=1, shape=(10,), dtype=numpy.int32),
         })
 
         self.balls = []
@@ -83,23 +84,21 @@ class GameEnvironment( gymnasium.Env ):
         
         balls_position_obs = numpy.zeros( (len(self.balls),2), dtype=numpy.float32 )
         balls_speed_obs = numpy.zeros( (len(self.balls),2), dtype=numpy.float32 )
-        balls_type_obs = numpy.zeros( len(self.balls), dtype=numpy.int32 )
+        balls_color_obs = numpy.zeros( len(self.balls), dtype=numpy.int32 )
+        balls_status_obs = numpy.zeros( len(self.balls), dtype=numpy.int32 )
         
         for i, ball in enumerate(self.balls):
             balls_position_obs[i,:] = ball.pos / dim_array
             balls_speed_obs[i,:] = ball.v / float( self.max_speed )
-            if not ball.live:
-                balls_type_obs[i] = 0
-            elif ball.color == GREEN:
-                balls_type_obs[i] = 1
-            else:
-                balls_type_obs[i] = 2
+            balls_color_obs[i] = int(ball.color == GREEN)
+            balls_status_obs[i] = int(ball.live)
                 
         return {
             'hero': hero_position_obs,
             'balls_position': balls_position_obs,
             'balls_speed': balls_speed_obs,
-            'balls_type': balls_type_obs
+            'balls_color': balls_color_obs,
+            'balls_status': balls_status_obs
         }
 
     def _get_info(self):

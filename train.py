@@ -1,14 +1,12 @@
-import os, numpy, torch, gymnasium
+import os
 from pathlib import Path
 from game_environment import GameEnvironment
-from expert_agent import ExpertAgent
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.evaluation import evaluate_policy
 from custom_features_extractor import CustomFeaturesExtractor
-import pickle
 
 # Constants
 DISPLAY_SHAPE = (480, 480)
@@ -42,12 +40,12 @@ else:
         env,
         policy_kwargs=policy_kwargs,
         verbose=1,
-        learning_rate=1e-4,
+        learning_rate=1e-5,
         n_steps=512,
         batch_size=128,
         gamma=0.999,
-        clip_range=0.15,
-        ent_coef=0.1
+        clip_range=0.05,
+        ent_coef=0.01
     )
 
 # Set up logging
@@ -63,12 +61,28 @@ eval_callback = EvalCallback(
     eval_freq=5000,
     deterministic=True,
     render=False,
-    n_eval_episodes=5
+    n_eval_episodes=15
 )
 
 # Train with PPO (fine-tuning)
 print("\nStarting PPO fine-tuning...")
 try:
+    # Phase 1: Train only value function
+    print("Phase 1: Train value function only...")
+    for param in model.policy.action_net.parameters():
+        param.requires_grad = False
+    for param in model.policy.mlp_extractor.policy_net.parameters():
+        param.requires_grad = False
+
+    model.vf_coef = 1.0
+    model.learn(total_timesteps=TOTAL_TIMESTEPS // 5)
+
+    # Phase 2: Unfreeze and train everything
+    print("Phase 2: Training full policy...")
+    for param in model.policy.parameters():
+        param.requires_grad = True
+        
+    model.vf_coef = 0.5
     model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=eval_callback)
 except Exception as e:
     print(f"Training failed: {e}")

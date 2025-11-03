@@ -106,10 +106,9 @@ def collect_expert_data(env, expert_agent, num_episodes=100):
     
     return observations, actions, episode_returns, episode_lengths
 
-def pretrain_policy_masked(model, observations, actions, epochs=60, batch_size=256):
-    """Pre-train with action 0 masked out during phase 1"""
+def pretrain_policy_balanced(model, observations, actions, max_epochs, batch_size, min_accuracy):
     print(f"\n{'='*60}")
-    print(f"Masked Progressive Pre-training")
+    print(f"Behavioural Cloning / Pre-training")
     print(f"{'='*60}\n")
     
     device = model.device
@@ -138,125 +137,37 @@ def pretrain_policy_masked(model, observations, actions, epochs=60, batch_size=2
             minority_obs.append(observations[i])
             minority_actions.append(action)
     
-    print(f"Phase 1: Training on minority classes (action 0 masked)")
-    print(f"  Minority samples: {len(minority_obs)}")
-    print(f"  Action 0 samples: {len(action0_obs)} (held out)\n")
+    print(f"Minority samples: {len(minority_obs)}")
+    print(f"Action 0 samples: {len(action0_obs)}\n")
     
-    # Phase 1: Train with action 0 masked
-    optimizer = torch.optim.Adam(model.policy.parameters(), lr=5e-3)
-    
+    optimizer = torch.optim.Adam(model.policy.parameters(), lr=1e-3)
     num_classes = model.action_space.n
-    phase1_epochs = epochs // 2
-    
-    for epoch in range(phase1_epochs):
-        indices = numpy.random.permutation(len(minority_obs))
-        epoch_loss = 0
-        epoch_accuracy = 0
-        num_batches = 0
-        
-        action_correct = {i: 0 for i in range(1, num_classes)}
-        action_total = {i: 0 for i in range(1, num_classes)}
-        
-        for start_idx in range(0, len(minority_obs), batch_size):
-            batch_indices = indices[start_idx:start_idx + batch_size]
-            
-            batch_obs = {}
-            for key in minority_obs[0].keys():
-                obs_stack = numpy.stack([minority_obs[i][key] for i in batch_indices])
-                batch_obs[key] = torch.FloatTensor(obs_stack).to(device)
-            
-            batch_actions = torch.LongTensor(
-                [minority_actions[i] for i in batch_indices]
-            ).to(device)
-            
-            # Get logits
-            action_distribution = model.policy.get_distribution(batch_obs)
-            logits = action_distribution.distribution.logits
-            
-            # CRITICAL: Mask action 0 by setting its logit to very negative value
-            masked_logits = logits.clone()
-            masked_logits[:, 0] = -1e10  # Effectively zero probability
-            
-            # Create new distribution with masked logits
-            masked_probs = torch.softmax(masked_logits, dim=1)
-            log_probs = torch.log(masked_probs + 1e-10)
-            
-            # Gather log probs for target actions
-            selected_log_probs = log_probs.gather(1, batch_actions.unsqueeze(1)).squeeze(1)
-            loss = -selected_log_probs.mean()
-            
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.policy.parameters(), 1.0)
-            optimizer.step()
-            
-            # Calculate accuracy using masked predictions
-            predicted_actions = masked_probs.argmax(dim=1)
-            
-            for i in range(len(batch_actions)):
-                true_action = batch_actions[i].item()
-                pred_action = predicted_actions[i].item()
-                action_total[true_action] += 1
-                if true_action == pred_action:
-                    action_correct[true_action] += 1
-            
-            accuracy = (predicted_actions == batch_actions).float().mean().item()
-            
-            epoch_loss += loss.item()
-            epoch_accuracy += accuracy
-            num_batches += 1
-        
-        avg_loss = epoch_loss / num_batches
-        avg_accuracy = epoch_accuracy / num_batches
-        
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"Phase 1 - Epoch {epoch+1:2d}/{phase1_epochs} | "
-                  f"Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.3f}")
-            
-            if (epoch + 1) % 10 == 0:
-                print("  Per-class accuracy:")
-                for action in range(1, num_classes):
-                    if action_total[action] > 0:
-                        acc = action_correct[action] / action_total[action]
-                        print(f"    Action {action}: {acc:.3f} "
-                              f"({action_correct[action]}/{action_total[action]})")
-    
-    # Phase 2: Balanced training with all actions
-    print(f"\nPhase 2: Training with balanced dataset (all actions)")
-    
-    # Undersample action 0
-    num_minority = len(minority_obs)
-    num_action0_to_keep = num_minority // 3
-    
-    indices_action0 = numpy.random.choice(len(action0_obs), num_action0_to_keep, replace=False)
-    
-    balanced_obs = minority_obs + [action0_obs[i] for i in indices_action0]
-    balanced_actions = minority_actions + [action0_actions[i] for i in indices_action0]
     
     # Shuffle
-    combined = list(zip(balanced_obs, balanced_actions))
-    numpy.random.shuffle(combined)
-    balanced_obs, balanced_actions = zip(*combined)
-    balanced_obs = list(balanced_obs)
-    balanced_actions = list(balanced_actions)
+    combined_obs = action0_obs + minority_obs
+    combined_actions = action0_actions + minority_actions
+    combined = list(zip(combined_obs, combined_actions))
     
-    print(f"  Total samples: {len(balanced_obs)}")
+    total_samples = len(combined)
+
+    print(f"Total samples: {total_samples}")
     action_counts = {}
-    for action in balanced_actions:
+    for action in combined_actions:
         action_counts[action] = action_counts.get(action, 0) + 1
-    print("  Action distribution:")
+    
+    action_weights = torch.zeros( len(action_counts.keys()), dtype=torch.float32 ).to(device)
+    
+    print("Action distribution:")
     for action in sorted(action_counts.keys()):
         count = action_counts[action]
-        print(f"    Action {action}: {count:6d} ({100*count/len(balanced_actions):5.1f}%)")
+        weight = float(total_samples) / float(count)
+        action_weights[action] = weight
+        print(f"  Action {action}: {count:6d} ({100/weight:5.1f}%)")
     print()
-    
-    # Lower learning rate for phase 2
+
     optimizer = torch.optim.Adam(model.policy.parameters(), lr=1e-3)
-    
-    phase2_epochs = epochs - phase1_epochs
-    
-    for epoch in range(phase2_epochs):
-        indices = numpy.random.permutation(len(balanced_obs))
+    for epoch in range(max_epochs):
+        indices = numpy.random.permutation(len(combined_obs))
         epoch_loss = 0
         epoch_accuracy = 0
         num_batches = 0
@@ -264,22 +175,23 @@ def pretrain_policy_masked(model, observations, actions, epochs=60, batch_size=2
         action_correct = {i: 0 for i in range(num_classes)}
         action_total = {i: 0 for i in range(num_classes)}
         
-        for start_idx in range(0, len(balanced_obs), batch_size):
+        for start_idx in range(0, len(combined_obs), batch_size):
             batch_indices = indices[start_idx:start_idx + batch_size]
             
             batch_obs = {}
-            for key in balanced_obs[0].keys():
-                obs_stack = numpy.stack([balanced_obs[i][key] for i in batch_indices])
+            for key in combined_obs[0].keys():
+                obs_stack = numpy.stack([combined_obs[i][key] for i in batch_indices])
                 batch_obs[key] = torch.FloatTensor(obs_stack).to(device)
             
             batch_actions = torch.LongTensor(
-                [balanced_actions[i] for i in batch_indices]
+                [combined_actions[i] for i in batch_indices]
             ).to(device)
             
-            # Normal training (no masking)
+            # Frequency adjusted loss calculation
             action_distribution = model.policy.get_distribution(batch_obs)
             log_probs = action_distribution.log_prob(batch_actions)
-            loss = -log_probs.mean()
+            weights = action_weights.gather(0, batch_actions)
+            loss = -torch.mean( weights * log_probs )
             
             optimizer.zero_grad()
             loss.backward()
@@ -308,21 +220,24 @@ def pretrain_policy_masked(model, observations, actions, epochs=60, batch_size=2
         for action in range(num_classes):
             if action_total[action] > 0:
                 acc = action_correct[action] / action_total[action]
-                per_class_accs.append(acc)
+                per_class_accs.append( acc )
         balanced_accuracy = numpy.mean(per_class_accs)
-        
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"Phase 2 - Epoch {epoch+1:2d}/{phase2_epochs} | "
-                  f"Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.3f} | "
-                  f"Balanced Acc: {balanced_accuracy:.3f}")
+
+        print(f"Epoch {epoch+1:2d}/{max_epochs} | "
+            f"Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.3f} | "
+            f"Balanced Acc: {balanced_accuracy:.3f}")
+
+        if balanced_accuracy > min_accuracy:
+            break
+
+        if (epoch + 1) % 10 == 0:
+            print("  Per-class accuracy:")
+            for action in range(num_classes):
+                if action_total[action] > 0:
+                    acc = action_correct[action] / action_total[action]
+                    print(f"    Action {action}: {acc:.3f} "
+                            f"({action_correct[action]}/{action_total[action]})")
             
-            if (epoch + 1) % 10 == 0:
-                print("  Per-class accuracy:")
-                for action in range(num_classes):
-                    if action_total[action] > 0:
-                        acc = action_correct[action] / action_total[action]
-                        print(f"    Action {action}: {acc:.3f} "
-                              f"({action_correct[action]}/{action_total[action]})")
     
     print(f"\n{'='*60}")
     print(f"Pre-training complete!")
@@ -391,25 +306,21 @@ if __name__ == "__main__":
             env,
             policy_kwargs=policy_kwargs,
             verbose=1,
-            learning_rate=1e-4,
-            n_steps=512,
+            learning_rate=1e-5,
+            n_steps=2048,
             batch_size=128,
             gamma=0.999,
-            clip_range=0.15,
-            ent_coef=0.1,
+            clip_range=0.05,
+            ent_coef=0.0001,
+            vf_coef=2.0,
+            max_grad_norm=0.5,
+            n_epochs=17,
             device=device
         )
         
-    # Evaluate before pre-training
-    print("\nEvaluating random policy...")
-    mean_reward_before, std_reward_before = evaluate_policy(
-        model, eval_env, n_eval_episodes=10
-    )
-    print(f"Before pre-training: {mean_reward_before:.2f} +/- {std_reward_before:.2f}")
-    
     try:
         # Pre-train with expert data
-        pretrain_policy_masked(model, observations, actions, epochs=100, batch_size=256)
+        pretrain_policy_balanced(model, observations, actions, max_epochs=200, batch_size=256, min_accuracy=0.95)
     except Exception as e:
         print(f"BC Training failed: {e}")
         import traceback
@@ -417,11 +328,3 @@ if __name__ == "__main__":
     finally:
         model.save(model_path)
         print(f"Model saved to {model_path}")
-    
-    # Evaluate after pre-training
-    print("\nEvaluating pre-trained policy...")
-    mean_reward_after, std_reward_after = evaluate_policy(
-        model, eval_env, n_eval_episodes=10
-    )
-    print(f"After pre-training: {mean_reward_after:.2f} +/- {std_reward_after:.2f}")
-    print(f"Improvement: {mean_reward_after - mean_reward_before:.2f}")
