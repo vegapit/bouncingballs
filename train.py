@@ -2,10 +2,6 @@ import os
 from pathlib import Path
 from game_environment import GameEnvironment
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import EvalCallback
-from stable_baselines3.common.logger import configure
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.evaluation import evaluate_policy
 from custom_features_extractor import CustomFeaturesExtractor
 
 # Constants
@@ -18,10 +14,6 @@ NUM_EXPERT_EPISODES = 128
 # Initialize environments
 env = GameEnvironment(DISPLAY_SHAPE, 1.0 / float(FPS))
 env.reset()
-
-eval_env = GameEnvironment(DISPLAY_SHAPE, 1.0 / float(FPS))
-eval_env.reset(seed=SEED)
-eval_env = Monitor(eval_env)
 
 # Paths
 model_path = Path("ppo_bouncing_balls_latest.zip")
@@ -48,22 +40,6 @@ else:
         ent_coef=0.01
     )
 
-# Set up logging
-tmp_path = "./logs/"
-os.makedirs(tmp_path, exist_ok=True)
-new_logger = configure(tmp_path, ["stdout", "tensorboard"])
-model.set_logger(new_logger)
-
-eval_callback = EvalCallback(
-    eval_env,
-    best_model_save_path="./best_model/",
-    log_path="./logs/",
-    eval_freq=5000,
-    deterministic=True,
-    render=False,
-    n_eval_episodes=15
-)
-
 # Train with PPO (fine-tuning)
 print("\nStarting PPO fine-tuning...")
 try:
@@ -83,7 +59,7 @@ try:
         param.requires_grad = True
         
     model.vf_coef = 0.5
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=eval_callback)
+    model.learn(total_timesteps=TOTAL_TIMESTEPS)
 except Exception as e:
     print(f"Training failed: {e}")
     import traceback
@@ -92,4 +68,3 @@ finally:
     model.save(model_path)
     print(f"Model saved to {model_path}")
     env.close()
-    eval_env.close()

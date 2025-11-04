@@ -21,8 +21,6 @@ Despite its simplicity, the game's environment has a highly dimensional observat
 
 The PPO model comes from the excellent [StableBaselines3](https://github.com/DLR-RM/stable-baselines3) Python library and as it is required in that case, the game environment implements the [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) API standard.
 
-During main training loop, Tensorboard logs are created and saved in the `logs` folder.
-
 ## Scripts
 
 The whole training process can be reconstructed on your machine:
@@ -31,3 +29,10 @@ The whole training process can be reconstructed on your machine:
 2. Run `train.py` to finalise the training of the PPO model on multiple online simulations and save versions of the trained model.
 3. Run `compare_performance.py` to compare your RL model and the expert agent. If the RL model does not outperform the agent, go back to step 2.
 3. Run `simulate.py` to see your trained agent in action.
+
+## Result
+
+The animated GIF at the top of the page shows simulations of a trained Deep RL model with the following performance statistics:
+
+**DRL model:** 1.975 ± 1.076
+**Expert Agent:** 1.462 ± 1.304
