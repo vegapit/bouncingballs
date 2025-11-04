@@ -28,11 +28,14 @@ The whole training process can be reconstructed on your machine:
 1. Run `bc_training.py` to record the simulations of the expert agent actions on 128 game simulations and, run the **Behavioural Cloning** algorithm using a balanced loss function.
 2. Run `train.py` to finalise the training of the PPO model on multiple online simulations and save versions of the trained model.
 3. Run `compare_performance.py` to compare your RL model and the expert agent. If the RL model does not outperform the agent, go back to step 2.
-3. Run `simulate.py` to see your trained agent in action.
+3. Run `simulate.py` to see and record your trained agent in action.
 
 ## Result
 
 The animated GIF at the top of the page shows simulations of a trained Deep RL model with the following performance statistics:
 
 **DRL model:** 1.975 ± 1.076
+
 **Expert Agent:** 1.462 ± 1.304
+
+Generally the higher the number of training epochs, the more efficient the Deep RL agent becomes. 
