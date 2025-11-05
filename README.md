@@ -1,6 +1,6 @@
 # Bouncing Balls
 
-Simple 2D game created as a research challenge for Reinforcement Learning algorithms
+Simple 2D game created as a research challenge for Reinforcement Learning algorithms. Here is a [blog post](https://vegapit.com/article/modern-tale-of-deep-learning-ppo-stabilisation/) explaining the modelling and training processes in finer details. 
 
 ![Animation](animation.gif)
 
